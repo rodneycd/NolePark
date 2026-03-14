@@ -37,6 +37,14 @@ Every teammate must install these two managers.
 
 ---
 
+## Database Setup (PostgreSQL)
+**Tech:** PostgreSQL + Docker Engine
+
+1. **Navigate:** Run from project root directory `NolePark`
+2. **Run:** `docker compose up -d` (reads `docker-compose.yml` and initializes the docker container)
+
+---
+
 ## Team Workflow Rules
 
 1. **Python Packages:** Use `uv add <name>`. Never use pip directly.
