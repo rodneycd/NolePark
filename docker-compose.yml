@@ -14,5 +14,18 @@ services:
       - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
       - ./seed.sql:/docker-entrypoint-initdb.d/02_seed.sql
 
+  web:
+    image: python:3.14-slim
+    container_name: nolepark_backend
+    volumes:
+      - ./backend:/app
+    working_dir: /app
+    ports:
+      - "5001:5000"
+    command: >
+      sh -c "pip install flask flask-cors 'psycopg[binary]' && python app.py"
+    depends_on:
+      - postgres
+
 volumes:
   pgdata:

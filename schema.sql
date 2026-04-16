@@ -209,3 +209,20 @@ JOIN PARKING_LOT  pl ON pl.lot_id       = sess.lot_id
 JOIN PARKING_SPOT ps ON ps.lot_id       = sess.lot_id AND ps.spot_id = sess.spot_id
 JOIN "LEVEL"      l  ON  l.lot_id       = ps.lot_id   AND  l.level_id = ps.level_id
 WHERE sess.end_time IS NULL;
+
+
+CREATE OR REPLACE VIEW v_user_profiles AS
+SELECT 
+    u.user_id, 
+    u.name, 
+    u.email,
+    CASE 
+        WHEN a.user_id IS NOT NULL THEN 'admin'
+        WHEN s.user_id IS NOT NULL THEN 'student'
+        ELSE 'user' 
+    END AS user_role,
+    s.fsuid,
+    s.permit_type
+FROM USERS u
+LEFT JOIN STUDENTS s ON u.user_id = s.user_id
+LEFT JOIN "ADMIN" a ON u.user_id = a.user_id;
