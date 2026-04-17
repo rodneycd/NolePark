@@ -47,9 +47,7 @@ CREATE TABLE STUDENTS (
                             REFERENCES USERS(user_id) ON DELETE CASCADE,
     permit_type VARCHAR(20) NOT NULL
                             REFERENCES PERMIT(permit_type),
-    fsuid       VARCHAR(20) UNIQUE,
-    "role"      VARCHAR(10) DEFAULT 'user'
-                            CHECK ("role" IN ('user','admin'))
+    fsuid       VARCHAR(20) UNIQUE
 );
  
 -- Admin subset of USERS
