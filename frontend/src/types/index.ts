@@ -8,6 +8,18 @@ export interface LoginResponse{
     user_id: number;
     message?: string;
 }
+export interface SignupCredentials {
+  name: string;
+  email: string;
+  password: string;
+  fsuid: string;
+}
+
+export interface SignupResponse {
+  success: boolean;
+  user_id?: number;
+  message: string;
+}
 
 export interface UserProfile {
   user_id: number;
