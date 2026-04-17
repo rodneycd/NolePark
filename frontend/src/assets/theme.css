@@ -1,0 +1,22 @@
+:root {
+  --fsu-garnet: #782F40;
+  --fsu-gold: #CEB888;
+  --fsu-black: #2D2926;
+  --bg-light: #F8F9FA;
+  
+  /* Semantic names make the code easier to read */
+  --primary: var(--fsu-garnet);
+  --accent: var(--fsu-gold);
+  --text-main: var(--fsu-black);
+}
+
+.btn-primary {
+  background-color: var(--primary);
+  color: white;
+  border-radius: 8px;
+  padding: 10px 20px;
+}
+
+.btn-primary:hover {
+  background-color: #5e2432; /* Slightly darker garnet for hover */
+}
