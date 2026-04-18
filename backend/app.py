@@ -4,6 +4,15 @@ from flask_cors import CORS
 from psycopg import connect
 from psycopg.rows import dict_row
 
+
+PERMIT_HIERARCHY = {
+    'Student': ['Student'],
+    'Overnight': ['Overnight', 'Student'],
+    'Reserved': ['Reserved', 'Overnight', 'Student'],
+    'Faculty': ['Faculty', 'Student']
+}
+
+
 app = Flask(__name__)
 CORS(app)
 
@@ -113,6 +122,41 @@ def update_user_permit(user_id):
         print(f"Update Error: {e}", flush=True)
         return {"success": False, "message": "Database error"}, 500
 
+@app.route('/api/lots/occupancy/<int:user_id>', methods=['GET'])
+def get_permit_specific_occupancy(user_id):
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT permit_type FROM STUDENTS WHERE user_id = %s", (user_id,))
+                user_permit = cur.fetchone()['permit_type']
+
+                accessible_permits = PERMIT_HIERARCHY.get(user_permit, [user_permit])
+
+                #Query the view but only include levels the user can park on
+                query = """
+                    SELECT 
+                        pl.lot_id, 
+                        pl.lot_name, 
+                        CASE WHEN g.lot_id IS NOT NULL THEN 'garage' ELSE 'surface' END as lot_type,
+                        SUM(available) as user_available,
+                        SUM(total_spots) as user_total_capacity,
+                        ROUND(SUM(occupied) * 100.0 / NULLIF(SUM(total_spots), 0), 1) as user_pct_full
+                    FROM v_occupancy_summary v
+                    JOIN PARKING_LOT pl ON v.lot_id = pl.lot_id
+                    LEFT JOIN GARAGE g ON pl.lot_id = g.lot_id
+                    WHERE allowed_permit_type = ANY(%s)
+                    GROUP BY pl.lot_id, pl.lot_name, g.lot_id
+                """
+                cur.execute(query, (accessible_permits,))
+                results = cur.fetchall()
+                cleaned_results = []
+                for row in results:
+                    row['user_available'] = int(row['user_available'])
+                    row['user_pct_full'] = float(row['user_pct_full'])
+                    cleaned_results.append(row)
+                return jsonify(cleaned_results), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 if __name__ == '__main__':
     # Bind to 0.0.0.0 and specify port 5000 for Docker
     app.run(host='0.0.0.0', port=5000, debug=True)
