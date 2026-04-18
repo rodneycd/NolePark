@@ -149,7 +149,12 @@ def get_permit_specific_occupancy(user_id):
                 """
                 cur.execute(query, (accessible_permits,))
                 results = cur.fetchall()
-                return jsonify(results), 200
+                cleaned_results = []
+                for row in results:
+                    row['user_available'] = int(row['user_available'])
+                    row['user_pct_full'] = float(row['user_pct_full'])
+                    cleaned_results.append(row)
+                return jsonify(cleaned_results), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 if __name__ == '__main__':
