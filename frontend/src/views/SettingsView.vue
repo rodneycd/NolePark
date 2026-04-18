@@ -31,6 +31,8 @@
       </p>
     </section>
 
+    <VehicleManager v-if="activeUserId" :userId="activeUserId" />
+
     <section class="settings-card logout-section">
       <button @click="logout" class="btn-outline">Logout of NolePark</button>
     </section>
@@ -41,8 +43,10 @@
 import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import userApi from '@/api/users';
+import VehicleManager from '@/components/VehicleManager.vue';
 
 const router = useRouter();
+const activeUserId = ref<number | null>(null); // Store the ID for the component
 const allPermits = ref<{ permit_type: string }[]>([]);
 const selectedPermit = ref('');
 const isUpdating = ref(false);
@@ -55,13 +59,14 @@ const filteredPermits = computed(() => {
 
 onMounted(async () => {
   try {
-    const userId = localStorage.getItem('active_user_id');
-    if (!userId) return;
-
+    const userIdStr = localStorage.getItem('active_user_id');
+    if (!userIdStr) return;
+    
+    activeUserId.value = Number(userIdStr);
 
     const [permitData, profileData] = await Promise.all([
       userApi.getPermits(),
-      userApi.getUserProfile(Number(userId))
+      userApi.getUserProfile(activeUserId.value)
     ]);
 
     allPermits.value = permitData;
@@ -75,14 +80,13 @@ onMounted(async () => {
 });
 
 const handleUpdatePermit = async () => {
-  const userId = localStorage.getItem('active_user_id');
-  if (!userId || !selectedPermit.value) return;
+  if (!activeUserId.value || !selectedPermit.value) return;
 
   isUpdating.value = true;
   isError.value = false;
   statusMessage.value = '';
   try {
-    const res = await userApi.updatePermit(Number(userId), selectedPermit.value);
+    const res = await userApi.updatePermit(activeUserId.value, selectedPermit.value);
     
     if (res.success) {
       statusMessage.value = "Permit updated successfully!";
