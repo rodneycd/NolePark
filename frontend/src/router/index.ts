@@ -29,7 +29,17 @@ const routes = [
     path: '/home',
     name: 'Home',
     component: HomeView,
-  }
+  },
+  {
+    path: '/search',
+    name: 'Search',
+    component: () => import('@/views/SearchView.vue')
+  },
+  {
+    path: '/sessions',
+    name: 'Sessions',
+    component: () => import('@/views/SessionsView.vue')
+  },
 ];
 
 const router = createRouter({
