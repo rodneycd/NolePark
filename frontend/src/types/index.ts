@@ -29,3 +29,12 @@ export interface UserProfile {
   fsuid?: string | null;
   permit_type?: string | null;
 }
+
+export interface ParkingLot {
+  lot_id: number;
+  lot_name: string;
+  lot_type: 'garage' | 'surface';
+  user_available: number;
+  user_total_capacity: number;
+  user_pct_full: number;
+}
