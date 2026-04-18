@@ -199,12 +199,14 @@ def register_vehicle():
 def unregister_vehicle(plate):
     try:
         # Ensure an active session vehicle cannot be deleted
-        active_session = execute_query(
-            "SELECT * FROM PARKING_SESSION WHERE license_plate = %s AND end_time IS NULL", 
-            (plate,)
-        )
-        if active_session:
-            return jsonify({"success": False, "message": "Cannot remove a vehicle currently in a parking session."}), 400
+        active_check_query = "SELECT * FROM v_active_sessions WHERE license_plate = %s"
+        is_active = execute_query(active_check_query, (plate.upper(),))
+
+        if is_active:
+            return jsonify({
+                "success": False, 
+                "message": f"Vehicle {plate} is currently parked in {is_active[0]['lot_name']}. End the session before removing."
+            }), 400
         
         query = "DELETE FROM VEHICLE WHERE license_plate = %s"
         execute_query(query, (plate.upper(),), fetch=False)
