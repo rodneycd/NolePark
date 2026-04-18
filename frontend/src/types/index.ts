@@ -38,3 +38,12 @@ export interface ParkingLot {
   user_total_capacity: number;
   user_pct_full: number;
 }
+
+export interface Vehicle {
+  license_plate: string;
+  make: string;
+  model: string;
+  color: string;
+  year: number;
+  owner_id?: number; // Optional because we often know the owner from context
+}

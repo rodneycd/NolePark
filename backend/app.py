@@ -157,6 +157,64 @@ def get_permit_specific_occupancy(user_id):
                 return jsonify(cleaned_results), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/users/<int:user_id>/vehicles', methods=['GET'])
+def get_user_vehicles(user_id):
+    try:
+        query = "SELECT license_plate, make, model, color, year FROM VEHICLE WHERE owner_id = %s"
+        vehicles = execute_query(query, (user_id,))
+        return jsonify(vehicles), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/vehicles', methods=['POST'])
+def register_vehicle():
+    data = request.json
+    plate = data.get('license_plate', '').strip().upper()
+    user_id = data.get('owner_id')
+
+    try:
+        # Check the 5-car limit
+        count_query = "SELECT COUNT(*) as count FROM VEHICLE WHERE owner_id = %s"
+        count_res = execute_query(count_query, (user_id,))
+        
+        # count_res is a list of dicts: [{'count': 0}]
+        if count_res[0]['count'] >= 5:
+            return jsonify({"success": False, "message": "Vehicle limit (5) reached."}), 400
+
+        insert_query = """
+            INSERT INTO VEHICLE (license_plate, make, model, color, year, owner_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        execute_query(insert_query, (plate, data['make'], data['model'], data['color'], data['year'], user_id), fetch=False)
+        
+        return jsonify({"success": True, "message": "Vehicle registered!"}), 201
+
+    except Exception as e:
+        if "unique constraint" in str(e).lower():
+            return jsonify({"success": False, "message": "This plate is already registered."}), 409
+        return jsonify({"success": False, "message": "Database error."}), 500
+
+@app.route('/api/vehicles/<string:plate>', methods=['DELETE'])
+def unregister_vehicle(plate):
+    try:
+        # Ensure an active session vehicle cannot be deleted
+        active_check_query = "SELECT * FROM v_active_sessions WHERE license_plate = %s"
+        is_active = execute_query(active_check_query, (plate.upper(),))
+
+        if is_active:
+            return jsonify({
+                "success": False, 
+                "message": f"Vehicle {plate} is currently parked in {is_active[0]['lot_name']}. End the session before removing."
+            }), 400
+        
+        query = "DELETE FROM VEHICLE WHERE license_plate = %s"
+        execute_query(query, (plate.upper(),), fetch=False)
+        return jsonify({"success": True, "message": "Vehicle removed."}), 200
+    
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
 if __name__ == '__main__':
     # Bind to 0.0.0.0 and specify port 5000 for Docker
     app.run(host='0.0.0.0', port=5000, debug=True)

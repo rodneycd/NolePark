@@ -1,5 +1,5 @@
 import apiClient from './index';
-import type { UserProfile } from '@/types';
+import type { UserProfile, Vehicle } from '@/types';
 
 export default {
   async getUserProfile(id: number): Promise<UserProfile> {
@@ -20,6 +20,20 @@ export default {
     const { data } = await apiClient.put(`/users/${userId}/permit`, {
       permit_type: permitType
     });
+    return data;
+  },
+    async getVehicles(userId: number): Promise<Vehicle[]> {
+    const { data } = await apiClient.get(`/users/${userId}/vehicles`);
+    return data;
+  },
+
+  async addVehicle(vehicle: Vehicle): Promise<{ success: boolean; message: string }> {
+    const { data } = await apiClient.post('/vehicles', vehicle);
+    return data;
+  },
+
+  async deleteVehicle(plate: string): Promise<{ success: boolean }> {
+    const { data } = await apiClient.delete(`/vehicles/${plate}`);
     return data;
   }
 };
