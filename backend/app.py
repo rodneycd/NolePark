@@ -215,6 +215,99 @@ def unregister_vehicle(plate):
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+@app.route('/api/lots/search', methods=['GET'])
+def search_lots():
+    name = request.args.get('name')
+    lot_type = request.args.get('lot_type')
+    spot_type = request.args.get('spot_type')
+    min_avail = request.args.get('available', type=int)
+    max_pct = request.args.get('occupancy_percent', type=float)
+
+    # Base Query using existing v_occupancy_summary
+    # We aggregate level-data into lot-level data here
+    query = """
+        SELECT 
+            os.lot_id, 
+            os.lot_name,
+            CASE 
+                WHEN s.lot_id IS NOT NULL THEN 'surface'
+                ELSE 'garage'
+            END AS lot_type,
+            SUM(os.total_spots) AS user_total_capacity,
+            SUM(os.available) AS user_available,
+            ROUND(AVG(os.pct_full), 1) AS user_pct_full,
+            SUM(os.handicap_spots) AS handicap_spots,
+            SUM(os.motorcycle_spots) AS motorcycle_spots
+        FROM v_occupancy_summary os
+        LEFT JOIN SURFACE_LOT s ON os.lot_id = s.lot_id
+        WHERE 1=1
+    """
+    params = []
+
+    # Dynamic Filtering (Conditional Query Building)
+    if name:
+        query += " AND os.lot_name ILIKE %s"
+        params.append(f"%{name}%")
+
+    if lot_type:
+        # Filter based on the CASE result or join existence
+        if lot_type.lower() == 'surface':
+            query += " AND s.lot_id IS NOT NULL"
+        elif lot_type.lower() == 'garage':
+            query += " AND s.lot_id IS NULL"
+
+    if spot_type == 'handicap':
+        query += " AND os.handicap_spots > 0"
+    elif spot_type == 'motorcycle':
+        query += " AND os.motorcycle_spots > 0"
+
+    # Final Aggregation Grouping
+    query += " GROUP BY os.lot_id, os.lot_name, s.lot_id"
+
+    having_clauses = []
+    
+    if min_avail is not None:
+        having_clauses.append("SUM(os.available) >= %s")
+        params.append(min_avail)
+        
+    if max_pct is not None:
+        # Max fullness logic: user wants lots UNDER this percent
+        having_clauses.append("AVG(os.pct_full) <= %s")
+        params.append(max_pct)
+
+    if having_clauses:
+        query += " HAVING " + " AND ".join(having_clauses)
+
+    try:
+        results = execute_query(query, tuple(params))
+        return jsonify(results), 200
+    except Exception as e:
+        print(f"[ERROR] Lot Search Failed: {e}")
+        return jsonify({"error": "Failed to retrieve search results"}), 500
+
+@app.route('/api/lots/<int:lot_id>/levels', methods=['GET'])
+def get_lot_levels(lot_id):
+    # Aggregating spot types specifically for available spots
+    query = """
+        SELECT 
+            level_id, 
+            level_number, 
+            allowed_permit_type,
+            total_spots,
+            available,
+            pct_full,
+            (SELECT COUNT(*) FROM PARKING_SPOT 
+             WHERE lot_id = os.lot_id AND level_id = os.level_id 
+             AND status = 'available' AND spot_type = 'handicap') as avail_handicap,
+            (SELECT COUNT(*) FROM PARKING_SPOT 
+             WHERE lot_id = os.lot_id AND level_id = os.level_id 
+             AND status = 'available' AND spot_type = 'motorcycle') as avail_motorcycle
+        FROM v_occupancy_summary os
+        WHERE lot_id = %s
+        ORDER BY level_number ASC
+    """
+    return jsonify(execute_query(query, (lot_id,))), 200
+
 if __name__ == '__main__':
     # Bind to 0.0.0.0 and specify port 5000 for Docker
     app.run(host='0.0.0.0', port=5000, debug=True)
