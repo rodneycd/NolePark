@@ -45,5 +45,31 @@ export interface Vehicle {
   model: string;
   color: string;
   year: number;
-  owner_id?: number; // Optional because we often know the owner from context
+  owner_id?: number;
+}
+
+export interface LotSearchResult extends ParkingLot {
+  address?: string;
+  handicap_spots: number;
+  motorcycle_spots: number;
+  level_count: number;
+  allowed_permit_types: string[];
+}
+
+export interface LotSearchParams {
+  name?: string;
+  lot_type?: string;
+  spot_type?: string;
+  occupancy_percent?: number;
+  available?: number;
+}
+export interface LotLevelDetail {
+  level_id: number;
+  level_number: number;
+  allowed_permit_type: string;
+  available: number;
+  total_spots: number;
+  avail_handicap: number;
+  avail_motorcycle: number;
+  pct_full: string;
 }
