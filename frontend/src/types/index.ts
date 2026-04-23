@@ -73,3 +73,25 @@ export interface LotLevelDetail {
   avail_motorcycle: number;
   pct_full: string;
 }
+
+export interface PredictionParams {
+  permit_type: string;
+  day_type: 'weekday' | 'weekednd';
+  arrival_time: string;
+}
+
+export interface PredictionResult {
+  lot_id: number;
+  lot_name: string;
+  lot_type: 'garage' | 'surface';
+  level_id: number;
+  level_number: number;
+  total_spots: number;
+  historical_occupied: number;
+  current_occupied: number;
+  predicted_occupied: number;
+  predicted_available: number;
+  predicted_percent_full: number;
+  congestion_label: string;
+  recommendation_rank: number;
+}

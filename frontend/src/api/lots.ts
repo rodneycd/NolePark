@@ -1,5 +1,6 @@
 import apiClient from "./index";
-import type { ParkingLot, LotSearchResult, LotSearchParams, LotLevelDetail } from "@/types";
+import type { ParkingLot, LotSearchResult, LotSearchParams, LotLevelDetail, PredictionParams, PredictionResult } from "@/types";
+
 
 export default {
   async getLotsForUser(userId: number): Promise<ParkingLot[]> {
@@ -15,5 +16,10 @@ export default {
   async getLotLevels(lotId: number): Promise<LotLevelDetail[]> {
     const { data } = await apiClient.get<LotLevelDetail[]>(`/lots/${lotId}/levels`);
     return data;
+  },
+
+  async predictLots(params: PredictionParams): Promise<PredictionResult[]> {
+  const { data } = await apiClient.post<PredictionResult[]>('/lots/predict', params);
+  return data;
   }
 };

@@ -1,20 +1,30 @@
 <template>
   <div class="search-page">
-    <FilterSidebar @filter-change="handleFilterChange" />
+    <FilterSidebar
+      @filter-change="handleFilterChange"
+      @predict="handlePrediction"
+      @mode-change="handleModeChange"
+    />
 
     <main class="results-main">
       <header class="results-header">
-        <h1>Find Parking</h1>
-        <p v-if="!isLoading">{{ lots.length }} Lots Available</p>
+        <h1>{{ mode === 'prediction' ? 'Prediction Results' : 'Find Parking' }}</h1>
+        <p v-if="!isLoading">
+          {{ mode === 'prediction' ? predictionLots.length : liveLots.length }}
+          {{ mode === 'prediction' ? 'Recommended Options' : 'Lots Available' }}
+        </p>
       </header>
 
       <div class="scroll-view">
-        <div v-if="isLoading" class="loading-box">Searching...</div>
-        
-        <template v-else-if="lots.length > 0">
-          <LotCard 
-            v-for="lot in lots" 
-            :key="lot.lot_id" 
+        <div v-if="isLoading" class="loading-box">
+          {{ mode === 'prediction' ? 'Predicting...' : 'Searching...' }}
+        </div>
+
+        <!-- LIVE MODE -->
+        <template v-else-if="mode === 'live' && liveLots.length > 0">
+          <LotCard
+            v-for="lot in liveLots"
+            :key="lot.lot_id"
             class="clickable-card"
             :name="lot.lot_name"
             :available="lot.user_available"
@@ -24,14 +34,37 @@
           />
         </template>
 
+        <!-- PREDICTION MODE -->
+        <template v-else-if="mode === 'prediction' && predictionLots.length > 0">
+          <LotCard
+            v-for="lot in predictionLots"
+            :key="`${lot.lot_id}-${lot.level_id}`"
+            class="clickable-card"
+            :name="lot.lot_name"
+            :available="lot.predicted_available"
+            :percent="lot.predicted_percent_full"
+            :lotType="lot.lot_type"
+            :isPrediction="true"
+            :levelNumber="lot.level_number"
+            :congestionLabel="lot.congestion_label"
+            :rank="lot.recommendation_rank"
+          />
+        </template>
+
+        <!-- NO RESULTS -->
         <div v-else class="no-results">
-          No lots match your filters.
+          {{
+            mode === 'prediction'
+              ? 'No prediction results found.'
+              : 'No lots match your filters.'
+          }}
         </div>
       </div>
     </main>
 
+    <!-- DRILL DOWN MODAL (LIVE MODE ONLY) -->
     <Teleport to="body">
-      <div v-if="selectedLot" class="overlay-backdrop" @click.self="closeDrillDown">
+      <div v-if="selectedLot && mode === 'live'" class="overlay-backdrop" @click.self="closeDrillDown">
         <div class="drill-down-modal">
           <header class="modal-header">
             <div>
@@ -45,7 +78,7 @@
             <div class="spinner"></div>
             <p>Updating live counts...</p>
           </div>
-          
+
           <table v-else class="level-table">
             <thead>
               <tr>
@@ -62,15 +95,15 @@
                 <td>
                   <div class="avail-count">{{ lvl.available }} / {{ lvl.total_spots }}</div>
                   <div class="spot-icons">
-                    <span v-if="lvl.avail_handicap > 0" class="spot-pill handicap" title="Handicap">♿ {{ lvl.avail_handicap }}</span>
-                    <span v-if="lvl.avail_motorcycle > 0" class="spot-pill motorcycle" title="Motorcycle">🏍️ {{ lvl.avail_motorcycle }}</span>
+                    <span v-if="lvl.avail_handicap > 0" class="spot-pill handicap">♿ {{ lvl.avail_handicap }}</span>
+                    <span v-if="lvl.avail_motorcycle > 0" class="spot-pill motorcycle">🏍️ {{ lvl.avail_motorcycle }}</span>
                   </div>
                 </td>
                 <td>
                   <div class="mini-progress-container">
-                    <div 
-                      class="mini-progress-bar" 
-                      :style="{ width: lvl.pct_full + '%' }" 
+                    <div
+                      class="mini-progress-bar"
+                      :style="{ width: lvl.pct_full + '%' }"
                       :class="getProgressClass(Number(lvl.pct_full))"
                     ></div>
                   </div>
@@ -90,20 +123,47 @@ import { ref, onMounted } from 'vue';
 import FilterSidebar from '@/components/FilterSidebar.vue';
 import LotCard from '@/components/LotCard.vue';
 import lotApi from '@/api/lots';
-import type { LotSearchResult, LotSearchParams, LotLevelDetail } from '@/types';
+import type {
+  LotSearchResult,
+  LotSearchParams,
+  LotLevelDetail,
+  PredictionResult,
+  PredictionParams
+} from '@/types';
 
-const lots = ref<LotSearchResult[]>([]);
+// MODE
+const mode = ref<'live' | 'prediction'>('live');
+
+// DATA
+const liveLots = ref<LotSearchResult[]>([]);
+const predictionLots = ref<PredictionResult[]>([]);
 const isLoading = ref(false);
 
-// Drill-down State
+// DRILL DOWN STATE
 const selectedLot = ref<LotSearchResult | null>(null);
 const lotLevels = ref<LotLevelDetail[]>([]);
 const isDetailLoading = ref(false);
 
+// MODE CHANGE
+const handleModeChange = async (newMode: 'live' | 'prediction') => {
+  mode.value = newMode;
+  selectedLot.value = null;
+  lotLevels.value = [];
+
+  if (newMode === 'live') {
+    await handleFilterChange({});
+  } else {
+    predictionLots.value = [];
+  }
+};
+
+// LIVE SEARCH
 const handleFilterChange = async (filters: LotSearchParams) => {
+  if (mode.value !== 'live') return;
+
   isLoading.value = true;
   try {
-    lots.value = await lotApi.searchLots(filters);
+    liveLots.value = await lotApi.searchLots(filters);
   } catch (error) {
     console.error("Search failed:", error);
   } finally {
@@ -111,8 +171,21 @@ const handleFilterChange = async (filters: LotSearchParams) => {
   }
 };
 
+// PREDICTION
+const handlePrediction = async (params: PredictionParams) => {
+  isLoading.value = true;
+  try {
+    predictionLots.value = await lotApi.predictLots(params);
+  } catch (error) {
+    console.error("Prediction failed:", error);
+    predictionLots.value = [];
+  } finally {
+    isLoading.value = false;
+  }
+};
+
+// DRILL DOWN
 const openDrillDown = async (lot: LotSearchResult) => {
-  console.log("Card clicked for lot:", lot.lot_id);
   selectedLot.value = lot;
   isDetailLoading.value = true;
   try {
@@ -129,32 +202,24 @@ const closeDrillDown = () => {
   lotLevels.value = [];
 };
 
+// PROGRESS BAR COLOR
 const getProgressClass = (pct: number) => {
   if (pct >= 90) return 'bg-danger';
   if (pct >= 70) return 'bg-warning';
   return 'bg-success';
 };
 
+// INITIAL LOAD
 onMounted(() => handleFilterChange({}));
 </script>
 
 <style>
-/* REMOVED scoped so Teleport works correctly */
-
 .search-page {
   display: flex;
-  flex-direction: row; /* Force sidebar and main side-by-side */
   width: 100vw;
   height: 100vh;
   overflow: hidden;
   background-color: var(--bg-light, #f5f5f5);
-}
-
-/* Sidebar Fix: Ensure it doesn't squish or push main content down */
-.filter-sidebar {
-  flex-shrink: 0;
-  width: 300px;
-  background-color: var(--sidebar-bg, #333);
 }
 
 .results-main {
@@ -169,161 +234,39 @@ onMounted(() => handleFilterChange({}));
   margin-bottom: 2rem;
 }
 
-.results-header h1 {
-  color: var(--primary-color, #78241c);
-}
-
-/* ScrollView Grid */
 .scroll-view {
   flex: 1;
   overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
   gap: 1.5rem;
-  padding-bottom: 2rem;
-  align-content: start;
 }
 
 .clickable-card {
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s ease;
 }
 
 .clickable-card:hover {
   transform: translateY(-5px);
-  box-shadow: 0 8px 15px rgba(0,0,0,0.1);
 }
 
-/* Modal & Overlay */
 .overlay-backdrop {
   position: fixed;
   top: 0;
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.6);
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 10000;
 }
 
 .drill-down-modal {
-  background: var(--card-bg, white);
-  padding: 2.5rem;
+  background: white;
+  padding: 2rem;
   border-radius: 16px;
-  width: 95%;
-  max-width: 650px;
-  max-height: 85vh;
-  overflow-y: auto;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
-  color: var(--text-main, #2c3e50);
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 2rem;
-}
-
-.close-modal-btn {
-  background: var(--bg-light, #f8f9fa);
-  border: none;
-  font-size: 1.2rem;
-  width: 35px;
-  height: 35px;
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-/* Level Table Styling */
-.level-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.level-table th {
-  text-align: left;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  color: var(--text-muted, #95a5a6);
-  padding: 10px;
-  border-bottom: 2px solid var(--border-color, #f4f7f6);
-}
-
-.level-table td {
-  padding: 15px 10px;
-  border-bottom: 1px solid var(--border-color, #f4f7f6);
-}
-
-.permit-tag {
-  background: var(--primary-color, #78241c);
-  color: white;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 0.75rem;
-  font-weight: bold;
-}
-
-
-.spot-icons span {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 32px; 
-  padding: 2px 6px;
-  background: var(--bg-light);
-  border-radius: 4px;
-  font-weight: 600;
-}
-
-.mini-progress-container {
-  width: 100px;
-  height: 6px;
-  background: var(--bg-light, #ecf0f1);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.mini-progress-bar {
-  height: 100%;
-  transition: width 0.3s ease;
-}
-
-/* Status Colors */
-.bg-success { background-color: var(--success-color, #27ae60); }
-.bg-warning { background-color: var(--warning-color, #f1c40f); }
-.bg-danger { background-color: var(--danger-color, #e74c3c); }
-
-.pct-text {
-  font-size: 0.75rem;
-  color: var(--text-muted, #7f8c8d);
-}
-
-.spot-icons {
-  display: flex;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.spot-pill {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background-color: var(--bg-light, #f8f9fa);
-  border: 1px solid var(--border-color, #e9ecef);
-}
-
-.handicap {
-  color: #007bff; 
-}
-
-.motorcycle {
-  color: #6c757d; 
+  width: 600px;
 }
 </style>
