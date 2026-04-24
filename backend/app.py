@@ -308,6 +308,109 @@ def get_lot_levels(lot_id):
     """
     return jsonify(execute_query(query, (lot_id,))), 200
 
+@app.route('/api/sessions/<int:user_id>/active', methods=['GET'])
+def get_active_session(user_id):
+    query = """
+        SELECT 
+            session_id, lot_name, spot_number, 
+            start_time::time(0), license_plate AS vehicle_plate,
+            make AS vehicle_make, model AS vehicle_model
+        FROM v_active_sessions 
+        WHERE owner_id = %s
+    """
+    result = execute_query(query, (user_id,))
+    
+    if not result:
+        return jsonify(None), 200
+        
+    session = result[0]
+    session['start_time'] = str(session['start_time'])
+    return jsonify(session), 200
+
+@app.route('/api/sessions/<int:user_id>/start', methods=['POST'])
+def start_session(user_id):
+    data = request.json
+    plate = data.get('license_plate')
+    lot_id = data.get('lot_id')
+    spot_num = data.get('spot_number')
+
+    student = execute_query("SELECT permit_type FROM STUDENTS WHERE user_id = %s", (user_id,))
+    if not student:
+        return jsonify({"error": "User does not have a student permit record."}), 403
+    
+    user_permit = student[0]['permit_type']
+    accessible = PERMIT_HIERARCHY.get(user_permit, [user_permit])
+
+    # Check Spot & Permit Requirements
+    spot_query = """
+        SELECT s.spot_id, s.status, l.allowed_permit_type 
+        FROM PARKING_SPOT s 
+        JOIN "LEVEL" l ON s.lot_id = l.lot_id AND s.level_id = l.level_id
+        WHERE s.lot_id = %s AND s.spot_number = %s
+    """
+    spot_result = execute_query(spot_query, (lot_id, spot_num,))
+    
+    if not spot_result:
+        return jsonify({"error": "Spot not found in this lot."}), 404
+    
+    spot = spot_result[0]
+    
+    # Standard Checks
+    if spot['status'] == 'occupied':
+        return jsonify({"error": "Spot is already occupied."}), 409
+
+    if spot['allowed_permit_type'] not in accessible:
+        return jsonify({"error": f"Permit Mismatch: {spot['allowed_permit_type']} required."}), 403
+
+    execute_query("""
+        INSERT INTO PARKING_SESSION (license_plate, lot_id, spot_id)
+        VALUES (%s, %s, %s)
+    """, (plate, lot_id, spot['spot_id']), fetch=False)
+    
+    execute_query("""
+        UPDATE PARKING_SPOT SET status = 'occupied' 
+        WHERE lot_id = %s AND spot_id = %s
+    """, (lot_id, spot['spot_id']), fetch=False)
+    
+    return jsonify({"success": True}), 201
+
+@app.route('/api/sessions/<int:user_id>/end/<int:session_id>', methods=['POST'])
+def end_session(user_id, session_id):
+    check_query = """
+        SELECT sess.lot_id, sess.spot_id 
+        FROM PARKING_SESSION sess
+        JOIN VEHICLE v ON sess.license_plate = v.license_plate
+        WHERE sess.session_id = %s AND v.owner_id = %s AND sess.end_time IS NULL
+    """
+    session_data = execute_query(check_query, (session_id, user_id))
+
+    if not session_data:
+        return jsonify({"error": "Active session not found or unauthorized."}), 404
+
+    target = session_data[0]
+
+    # End Session & Free Spot
+    execute_query("UPDATE PARKING_SESSION SET end_time = CURRENT_TIME WHERE session_id = %s", 
+                  (session_id,), fetch=False)
+    
+    execute_query("UPDATE PARKING_SPOT SET status = 'available' WHERE lot_id = %s AND spot_id = %s", 
+                  (target['lot_id'], target['spot_id']), fetch=False)
+
+    return jsonify({"success": True}), 200
+
+@app.route('/api/lots/suggest', methods=['GET'])
+def suggest_lots():
+    query = request.args.get('q', '')
+    if len(query) < 2:
+        return jsonify([])
+
+    lots = execute_query("""
+        SELECT lot_id, lot_name FROM PARKING_LOT 
+        WHERE lot_name ILIKE %s ORDER BY lot_name LIMIT 5
+    """, (f'%{query}%',))
+    
+    return jsonify(lots), 200
+
 if __name__ == '__main__':
     # Bind to 0.0.0.0 and specify port 5000 for Docker
     app.run(host='0.0.0.0', port=5000, debug=True)
