@@ -15,5 +15,12 @@ export default {
   async getLotLevels(lotId: number): Promise<LotLevelDetail[]> {
     const { data } = await apiClient.get<LotLevelDetail[]>(`/lots/${lotId}/levels`);
     return data;
+  },
+  
+  async suggestLots(query: string): Promise<{ lot_id: number; lot_name: string }[]> {
+    const { data } = await apiClient.get<{ lot_id: number; lot_name: string }[]>('/lots/suggest', {
+      params: { q: query }
+    });
+    return data;
   }
 };

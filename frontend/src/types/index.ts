@@ -73,3 +73,18 @@ export interface LotLevelDetail {
   avail_motorcycle: number;
   pct_full: string;
 }
+export interface ParkingSession {
+  session_id: number;
+  lot_name: string;
+  spot_number: string;
+  start_time: string;
+  vehicle_make: string;
+  vehicle_model: string;
+  vehicle_plate: string;
+}
+
+export interface StartSessionPayload {
+  license_plate: string;
+  lot_id: number;
+  spot_number: string;
+}

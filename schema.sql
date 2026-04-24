@@ -191,6 +191,8 @@ SELECT
     sess.start_time,
     sess.license_plate,
     v.owner_id,
+    v.make,
+    v.model,
     u."name"      AS owner_name,
     s.permit_type,
     sess.lot_id,
