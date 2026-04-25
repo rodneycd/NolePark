@@ -17,7 +17,7 @@ const route = useRoute();
 
 // Only show nav if we aren't on the auth pages
 const showNav = computed(() => {
-  return route.name !== 'Login' && route.name !== 'Signup';
+  return route.name !== 'Login' && route.name !== 'Signup' && !route.path.startsWith('/admin');
 });
 </script>
 

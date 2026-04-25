@@ -4,8 +4,27 @@ import SignupView from '../views/SignupView.vue';
 import SettingsView from '@/views/SettingsView.vue';
 import HomeView from '@/views/HomeDashView.vue';
 import user from '../api/users'
+import AdminLayout from '@/layouts/AdminLayout.vue';
+import LotManagement from '@/views/admin/LotManagement.vue';
+import ActiveSessions from '@/views/admin/ActiveSessions.vue';
 
 const routes = [
+  {
+    path: '/admin',
+    component: AdminLayout,
+    children: [
+      {
+        path: 'lots',
+        name: 'AdminLots',
+        component: LotManagement,
+      },
+      {
+         path: 'sessions',
+         name: 'ActiveSessions',
+         component: ActiveSessions
+      },
+    ]
+  },
   {
     path: '/',
     redirect: '/login'

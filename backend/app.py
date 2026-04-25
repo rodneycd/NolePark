@@ -33,6 +33,10 @@ def execute_query(query, params=None, fetch=True):
                 return result
             conn.commit()
             return None
+        
+def get_fsu_id(user_id):
+    fsu_id = execute_query("SELECT fsuid FROM students WHERE user_id = %s", (user_id,))
+    return fsu_id
 
 # --- ROUTES ---
 
@@ -410,6 +414,202 @@ def suggest_lots():
     """, (f'%{query}%',))
     
     return jsonify(lots), 200
+
+@app.route('/api/admin/dashboard-stats', methods=['GET'])
+def get_dashboard_stats():
+    try:
+        # 1. Get Active Sessions
+        # execute_query returns a list, so we grab the first item [0]
+        active_res = execute_query("SELECT COUNT(*) as count FROM v_active_sessions")
+        active_count = active_res[0]['count'] if active_res else 0
+        
+        # 2. Get Infrastructure Summary
+        summary_res = execute_query("""
+            SELECT 
+                COUNT(DISTINCT lot_id) as total_lots,
+                SUM(total_spots) as total_spots,
+                AVG(pct_full) as avg_occupancy
+            FROM v_occupancy_summary
+        """)
+        
+        # Use .get() to avoid errors if the database is empty (None values)
+        row = summary_res[0] if summary_res else {}
+
+        stats = [
+            { "label": "Active Sessions", "value": active_count, "icon": "🚗" },
+            { "label": "Managed Lots", "value": row.get('total_lots', 0), "icon": "🏢" },
+            { "label": "Total Spots", "value": row.get('total_spots', 0), "icon": "🅿️" },
+            { "label": "Campus Occupancy", "value": f"{round(row.get('avg_occupancy') or 0)}%", "icon": "📊" }
+        ]
+        
+        return jsonify(stats), 200
+
+    except Exception as e:
+        print(f"Error in dashboard-stats: {e}")
+        return jsonify({"error": str(e)}), 500
+    
+@app.route('/api/admin/inventory', methods=['GET'])
+def get_admin_inventory():
+    try:
+        # Use your existing view! 
+        # We group by lot to get the 'Structure' info (levels/total spots)
+        query = """
+            SELECT 
+                lot_id as id,
+                lot_name as name,
+                -- We'll assume icons/types are handled by name or a separate logic
+                -- but for now let's get the core stats
+                MAX(level_number) as levels, 
+                SUM(total_spots) as total_spots,
+                SUM(occupied) as occupied
+            FROM v_occupancy_summary
+            GROUP BY lot_id, lot_name
+        """
+        results = execute_query(query)
+        
+        # Add a simple 'type' logic if it's not in your view yet
+        for lot in results:
+            lot['type'] = 'Garage' if lot['levels'] > 1 else 'Surface'
+            
+        return jsonify(results), 200
+    except Exception as e:
+        print(f"Inventory Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/create-lot-infrastructure', methods=['POST'])
+def create_lot_infrastructure():
+    data = request.json
+    lot_name = data.get('name')
+    # Using your 'lot_name' column name from PARKING_LOT
+    level_configs = data.get('level_configs') 
+
+    if not lot_name or not level_configs:
+        return jsonify({"error": "Missing required fields"}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        # 1. Insert the Lot (Using your PARKING_LOT table)
+        # Note: 'prefix' isn't in your schema, so we'll use it for logic but not DB storage
+        # unless you add it to PARKING_LOT. 
+        cur.execute(
+            "INSERT INTO PARKING_LOT (lot_name) VALUES (%s) RETURNING lot_id",
+            (lot_name,)
+        )
+        lot_id = cur.fetchone()['lot_id']
+
+        for config in level_configs:
+            # 2. Validation
+            total = config['total_spots']
+            hc_count = config.get('hc_count', 0)
+            moto_count = config.get('moto_count', 0)
+
+            if (hc_count + moto_count) > total:
+                raise ValueError(f"Level {config['level_number']} specialty spots exceed capacity.")
+
+            # 3. Insert the Level (Using your "LEVEL" table)
+            # Note: "LEVEL" is a reserved word, so we quote it.
+            cur.execute(
+                """
+                INSERT INTO "LEVEL" (lot_id, level_number, allowed_permit_type) 
+                VALUES (%s, %s, %s) RETURNING level_id
+                """,
+                (lot_id, config['level_number'], config['permit_type'])
+            )
+            level_id = cur.fetchone()['level_id']
+
+            # 4. Generate Spots (Using your PARKING_SPOT table)
+            for i in range(1, total + 1):
+                # Determine Spot Type (standard, handicap, motorcycle)
+                if i <= hc_count:
+                    s_type = 'handicap'
+                elif i <= (hc_count + moto_count):
+                    s_type = 'motorcycle'
+                else:
+                    s_type = 'standard'
+
+                # Spot number logic
+                # Using the prefix from the form to build a string for ps.spot_number
+                prefix = data.get('prefix', 'LOT')
+                formatted_spot_num = f"{prefix}{config['level_number']}-{i}"
+
+                cur.execute(
+                    """
+                    INSERT INTO PARKING_SPOT (lot_id, level_id, spot_number, spot_type, "status") 
+                    VALUES (%s, %s, %s, %s, 'available')
+                    """,
+                    (lot_id, level_id, formatted_spot_num, s_type)
+                )
+
+        conn.commit()
+        return jsonify({"message": f"Successfully generated {lot_name} infrastructure."}), 201
+
+    except Exception as e:
+        conn.rollback()
+        print(f"Transaction Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        cur.close()
+        conn.close()
+
+    
+@app.route('/api/admin/active-sessions', methods=['GET'])
+def get_active_sessions():
+    try:
+        # Pulling from your view which already joins USERS, VEHICLES, and LOTS
+        query = """
+            SELECT 
+                v.session_id,
+                v.owner_name,
+                s.fsuid, 
+                v.permit_type,
+                v.license_plate,
+                v.make,
+                v.model,
+                v.lot_name,
+                v.level_number,
+                v.spot_number,
+                TO_CHAR(v.start_time, 'HH12:MI AM') as start_time_fmt
+            FROM v_active_sessions v
+            LEFT JOIN students s ON v.owner_id = s.user_id
+            ORDER BY v.start_time DESC
+        """
+        sessions = execute_query(query)
+        return jsonify(sessions), 200
+    except Exception as e:
+        print(e)
+        return jsonify({"error": str(e)}), 500
+
+# 1. GET detailed lot info (Levels + Spot Breakdown)
+@app.route('/api/admin/infrastructure/<int:lot_id>', methods=['GET'])
+def get_infra_details(lot_id):
+    # Get level details
+    levels = execute_query('SELECT * FROM "LEVEL" WHERE lot_id = %s ORDER BY level_number', (lot_id,))
+    # Get spot breakdown
+    spots = execute_query('''
+        SELECT spot_type, status, COUNT(*) as count 
+        FROM PARKING_SPOT WHERE lot_id = %s 
+        GROUP BY spot_type, status
+    ''', (lot_id,))
+    return jsonify({"levels": levels, "spots": spots})
+
+# 2. PATCH: Update permit type for a specific level
+@app.route('/api/admin/level/<int:lot_id>/<int:level_id>', methods=['PATCH'])
+def update_level_permit(lot_id, level_id):
+    new_permit = request.json.get('permit_type')
+    execute_query(
+        'UPDATE "LEVEL" SET allowed_permit_type = %s WHERE lot_id = %s AND level_id = %s',
+        (new_permit, lot_id, level_id)
+    )
+    return jsonify({"message": "Permit updated"})
+
+# 3. DELETE: Wipe the lot (Cascade handles the rest)
+@app.route('/api/admin/infrastructure/<int:lot_id>', methods=['DELETE'])
+def delete_infra(lot_id):
+    execute_query('DELETE FROM PARKING_LOT WHERE lot_id = %s', (lot_id,))
+    return jsonify({"message": "Infrastructure deleted"})
 
 if __name__ == '__main__':
     # Bind to 0.0.0.0 and specify port 5000 for Docker
