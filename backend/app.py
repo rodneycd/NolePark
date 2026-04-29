@@ -3,7 +3,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from psycopg import connect
 from psycopg.rows import dict_row
-
+from functools import wraps
 
 PERMIT_HIERARCHY = {
     'Student': ['Student'],
@@ -19,6 +19,30 @@ CORS(app)
 CONN_STR = "host=postgres dbname=myapp user=myuser password=mypassword"
 
 # --- DATABASE UTILITIES ---
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Retrieve the user ID from the custom header
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            return jsonify({"success": False, "message": "Authentication required"}), 401
+        
+        try:
+            is_admin = execute_query(
+                'SELECT 1 FROM "ADMIN" WHERE user_id = %s', 
+                (user_id,)
+            )
+            
+            if not is_admin:
+                return jsonify({"success": False, "message": "Admin privileges required"}), 403
+                
+        except Exception as e:
+            print(f"Auth Decorator Error: {e}")
+            return jsonify({"success": False, "message": "Server error during auth check"}), 500
+            
+        return f(*args, **kwargs)
+    return decorated_function
 
 def get_db_connection():
     return connect(CONN_STR, row_factory=dict_row)
@@ -33,11 +57,6 @@ def execute_query(query, params=None, fetch=True):
                 return result
             conn.commit()
             return None
-        
-def get_fsu_id(user_id):
-    fsu_id = execute_query("SELECT fsuid FROM students WHERE user_id = %s", (user_id,))
-    return fsu_id
-
 # --- ROUTES ---
 
 @app.route('/api/login', methods=['POST'])
@@ -99,9 +118,16 @@ def get_users():
 
 @app.route('/api/users/<int:user_id>', methods=['GET'])
 def get_profile(user_id):
-    user = execute_query("SELECT * FROM v_user_profiles WHERE user_id = %s", (user_id,))
-    return jsonify(user[0] if user else {})
+    user_data = execute_query("SELECT * FROM v_user_profiles WHERE user_id = %s", (user_id,))
+    
+    if not user_data:
+        return jsonify({}), 404
+    
+    profile = user_data[0]
+    admin_check = execute_query('SELECT 1 FROM "ADMIN" WHERE user_id = %s', (user_id,))
+    profile['user_role'] = 'admin' if admin_check else 'student'
 
+    return jsonify(profile)
 @app.route('/api/permits', methods=['GET'])
 def get_permits():
     permits = execute_query("SELECT permit_type FROM PERMIT")
@@ -416,6 +442,7 @@ def suggest_lots():
     return jsonify(lots), 200
 
 @app.route('/api/admin/dashboard-stats', methods=['GET'])
+@admin_required
 def get_dashboard_stats():
     try:
         # 1. Get Active Sessions
@@ -449,6 +476,7 @@ def get_dashboard_stats():
         return jsonify({"error": str(e)}), 500
     
 @app.route('/api/admin/inventory', methods=['GET'])
+@admin_required
 def get_admin_inventory():
     try:
         # Use your existing view! 
@@ -475,6 +503,7 @@ def get_admin_inventory():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/admin/create-lot-infrastructure', methods=['POST'])
+@admin_required
 def create_lot_infrastructure():
     data = request.json
     lot_name = data.get('name')
@@ -554,6 +583,7 @@ def create_lot_infrastructure():
 
     
 @app.route('/api/admin/active-sessions', methods=['GET'])
+@admin_required
 def get_active_sessions():
     try:
         # Pulling from your view which already joins USERS, VEHICLES, and LOTS
@@ -581,6 +611,7 @@ def get_active_sessions():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/admin/infrastructure', methods=['GET'])
+@admin_required
 def get_all_infrastructure():
     conn = get_db_connection() 
     cursor = conn.cursor()
@@ -613,6 +644,7 @@ def get_all_infrastructure():
         conn.close()
 
 @app.route('/api/admin/infrastructure/<int:lot_id>', methods=['GET'])
+@admin_required
 def get_infra_details(lot_id):
     # Get level details
     levels_query = """
@@ -634,6 +666,7 @@ def get_infra_details(lot_id):
     return jsonify({"levels": levels, "spots": spots})
 
 @app.route('/api/admin/level/<int:lot_id>/<int:level_id>', methods=['PATCH'])
+@admin_required
 def update_level_permit(lot_id, level_id):
     new_permit = request.json.get('permit_type')
     query = '''
@@ -661,6 +694,7 @@ def update_level_permit(lot_id, level_id):
     return jsonify({"message": "Permit updated"})
 
 @app.route('/api/admin/infrastructure/<int:lot_id>', methods=['DELETE'])
+@admin_required
 def delete_infra(lot_id):
     active = execute_query('''
         SELECT COUNT(*) as count FROM PARKING_SESSION 
@@ -676,9 +710,9 @@ def delete_infra(lot_id):
     execute_query('DELETE FROM PARKING_LOT WHERE lot_id = %s', (lot_id,))
     return jsonify({"success": True})
 
-
 # --- Individual Action ---
 @app.route('/api/admin/sessions/close/<int:session_id>', methods=['POST'])
+@admin_required
 def close_session(session_id):
     # Standard manual checkout
     execute_query('''
