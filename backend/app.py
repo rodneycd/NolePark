@@ -312,98 +312,95 @@ def get_lot_levels(lot_id):
 def predict_lots():
     data = request.json
     permit_type = data.get('permit_type')
-    day_type = data.get('day_type')
+    day_of_week = data.get('day_of_week')
     arrival_time = data.get('arrival_time')
 
-    if not permit_type or not day_type or not arrival_time:
-        return jsonify({"error": "permit_type, day_type, and arrival_time are required"}), 400
+    if not permit_type or not day_of_week or not arrival_time:
+        return jsonify({"error": "permit_type, day_of_week, and arrival_time are required"}), 400
 
     try:
+        day_of_week = int(day_of_week)
+
+        if day_of_week in [0, 6]:
+            day_type = 'weekend'
+        else:
+            day_type = 'weekday'
         hour_of_day = int(arrival_time.split(':')[0])
 
         query = """
+            WITH prediction_base AS (
+                SELECT
+                    lpo.lot_id,
+                    lpo.lot_name,
+                    CASE
+                        WHEN s.lot_id IS NOT NULL THEN 'surface'
+                        ELSE 'garage'
+                    END AS lot_type,
+                    lpo.level_id,
+                    lpo.level_number,
+                    lc.total_spots,
+                    COALESCE(hh.historical_sessions, 0) AS historical_occupied,
+                    COALESCE(co.current_occupied, 0) AS current_occupied,
+                    LEAST(
+                        lc.total_spots,
+                        GREATEST(
+                            COALESCE(hh.historical_sessions, 0),
+                            COALESCE(co.current_occupied, 0)
+                        )
+                    ) AS predicted_occupied
+                FROM v_prediction_legal_options lpo
+                JOIN v_prediction_level_capacity lc
+                    ON lpo.lot_id = lc.lot_id
+                AND lpo.level_id = lc.level_id
+                LEFT JOIN v_prediction_hourly_history hh
+                    ON lpo.lot_id = hh.lot_id
+                AND lpo.level_id = hh.level_id
+                AND hh.day_of_week = %s
+                AND hh.hour_of_day = %s
+                LEFT JOIN v_prediction_current_occupancy co
+                    ON lpo.lot_id = co.lot_id
+                    AND lpo.level_id = co.level_id
+                LEFT JOIN SURFACE_LOT s
+                    ON lpo.lot_id = s.lot_id
+                WHERE lpo.permit_type = %s
+                    AND lpo.day_type IN (%s, 'any')
+                    AND %s >= lpo.start_time
+                    AND %s < lpo.end_time
+            )
             SELECT
-                lpo.lot_id,
-                lpo.lot_name,
-                CASE
-                    WHEN s.lot_id IS NOT NULL THEN 'surface'
-                    ELSE 'garage'
-                END AS lot_type,
-                lpo.level_id,
-                lpo.level_number,
-                lc.total_spots,
-                COALESCE(hh.historical_sessions, 0) AS historical_occupied,
-                COALESCE(co.current_occupied, 0) AS current_occupied,
-                GREATEST(
-                    COALESCE(hh.historical_sessions, 0),
-                    COALESCE(co.current_occupied, 0)
-                ) AS predicted_occupied,
-                lc.total_spots - GREATEST(
-                    COALESCE(hh.historical_sessions, 0),
-                    COALESCE(co.current_occupied, 0)
-                ) AS predicted_available,
+                lot_id,
+                lot_name,
+                lot_type,
+                level_id,
+                level_number,
+                total_spots,
+                historical_occupied,
+                current_occupied,
+                predicted_occupied,
+                total_spots - predicted_occupied AS predicted_available,
                 ROUND(
-                    GREATEST(
-                        COALESCE(hh.historical_sessions, 0),
-                        COALESCE(co.current_occupied, 0)
-                    ) * 100.0 / NULLIF(lc.total_spots, 0),
+                    predicted_occupied * 100.0 / NULLIF(total_spots, 0),
                     1
                 ) AS predicted_percent_full,
                 CASE
-                    WHEN ROUND(
-                        GREATEST(
-                            COALESCE(hh.historical_sessions, 0),
-                            COALESCE(co.current_occupied, 0)
-                        ) * 100.0 / NULLIF(lc.total_spots, 0),
-                        1
-                    ) < 40 THEN 'Low congestion'
-                    WHEN ROUND(
-                        GREATEST(
-                            COALESCE(hh.historical_sessions, 0),
-                            COALESCE(co.current_occupied, 0)
-                        ) * 100.0 / NULLIF(lc.total_spots, 0),
-                        1
-                    ) < 75 THEN 'Moderate congestion'
+                    WHEN ROUND(predicted_occupied * 100.0 / NULLIF(total_spots, 0), 1) < 40
+                        THEN 'Low congestion'
+                    WHEN ROUND(predicted_occupied * 100.0 / NULLIF(total_spots, 0), 1) < 75
+                        THEN 'Moderate congestion'
                     ELSE 'High congestion'
                 END AS congestion_label,
                 ROW_NUMBER() OVER (
                     ORDER BY
-                        lc.total_spots - GREATEST(
-                            COALESCE(hh.historical_sessions, 0),
-                            COALESCE(co.current_occupied, 0)
-                        ) DESC,
-                        ROUND(
-                            GREATEST(
-                                COALESCE(hh.historical_sessions, 0),
-                                COALESCE(co.current_occupied, 0)
-                            ) * 100.0 / NULLIF(lc.total_spots, 0),
-                            1
-                        ) ASC
+                        ROUND(predicted_occupied * 100.0 / NULLIF(total_spots, 0), 1) ASC,
+                        (total_spots - predicted_occupied) DESC
                 ) AS recommendation_rank
-            FROM v_prediction_legal_options lpo
-            JOIN v_prediction_level_capacity lc
-                ON lpo.lot_id = lc.lot_id
-               AND lpo.level_id = lc.level_id
-            LEFT JOIN v_prediction_hourly_history hh
-                ON lpo.lot_id = hh.lot_id
-               AND lpo.level_id = hh.level_id
-            LEFT JOIN v_prediction_current_occupancy co
-                ON lpo.lot_id = co.lot_id
-               AND lpo.level_id = co.level_id
-            LEFT JOIN SURFACE_LOT s
-                ON lpo.lot_id = s.lot_id
-            WHERE lpo.permit_type = %s
-              AND lpo.day_type IN (%s, 'any')
-              AND %s >= lpo.start_time
-              AND %s < lpo.end_time
-              AND (hh.day_type = %s OR hh.day_type IS NULL)
-              AND (hh.hour_of_day = %s OR hh.hour_of_day IS NULL)
+            FROM prediction_base
             ORDER BY recommendation_rank;
         """
 
         results = execute_query(
             query,
-            (permit_type, day_type, arrival_time, arrival_time, day_type, hour_of_day)
+            (day_of_week, hour_of_day, permit_type, day_type, arrival_time, arrival_time)
         )
 
         cleaned_results = []

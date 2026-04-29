@@ -13,6 +13,8 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
       - ./seed.sql:/docker-entrypoint-initdb.d/02_seed.sql
+      - ./more_seed_data.sql:/docker-entrypoint-initdb.d/03_more_seed_data.sql
+      - ./prediction_views.sql:/docker-entrypoint-initdb.d/04_prediction_views.sql
 
   web:
     image: python:3.14-slim

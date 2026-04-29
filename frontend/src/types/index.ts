@@ -76,7 +76,7 @@ export interface LotLevelDetail {
 
 export interface PredictionParams {
   permit_type: string;
-  day_type: 'weekday' | 'weekednd';
+  day_of_week: number;
   arrival_time: string;
 }
 

@@ -22,7 +22,7 @@ const filters = reactive<LotSearchParams>({
 
 const prediction = reactive<PredictionParams>({
   permit_type: 'Student',
-  day_type: 'weekday',
+  day_of_week: 2,
   arrival_time: '10:30:00'
 })
 
@@ -121,9 +121,14 @@ const runPrediction = () => {
 
         <div class="filter-group">
           <label>Day Type</label>
-          <select v-model="prediction.day_type">
-            <option value="weekday">Weekday</option>
-            <option value="weekend">Weekend</option>
+          <select v-model.number="prediction.day_of_week">
+            <option value="1">Monday</option>
+            <option value="2">Tuesday</option>
+            <option value="3">Wednesday</option>
+            <option value="4">Thursday</option>
+            <option value="5">Friday</option>
+            <option value="6">Saturday</option>
+            <option value="0">Sunday</option>
           </select>
         </div>
 
