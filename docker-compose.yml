@@ -13,6 +13,21 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
       - ./seed.sql:/docker-entrypoint-initdb.d/02_seed.sql
+      - ./more_seed_data.sql:/docker-entrypoint-initdb.d/03_more_seed_data.sql
+      - ./prediction_views.sql:/docker-entrypoint-initdb.d/04_prediction_views.sql
+
+  web:
+    image: python:3.14-slim
+    container_name: nolepark_backend
+    volumes:
+      - ./backend:/app
+    working_dir: /app
+    ports:
+      - "5001:5000"
+    command: >
+      sh -c "pip install flask flask-cors 'psycopg[binary]' && python app.py"
+    depends_on:
+      - postgres
 
 volumes:
   pgdata:
