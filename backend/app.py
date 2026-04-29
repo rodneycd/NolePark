@@ -455,10 +455,8 @@ def get_admin_inventory():
         # We group by lot to get the 'Structure' info (levels/total spots)
         query = """
             SELECT 
-                lot_id as id,
-                lot_name as name,
-                -- We'll assume icons/types are handled by name or a separate logic
-                -- but for now let's get the core stats
+                lot_id,
+                lot_name,
                 MAX(level_number) as levels, 
                 SUM(total_spots) as total_spots,
                 SUM(occupied) as occupied
@@ -582,34 +580,113 @@ def get_active_sessions():
         print(e)
         return jsonify({"error": str(e)}), 500
 
-# 1. GET detailed lot info (Levels + Spot Breakdown)
+@app.route('/api/admin/infrastructure', methods=['GET'])
+def get_all_infrastructure():
+    conn = get_db_connection() 
+    cursor = conn.cursor()
+    
+    try:
+        query = """
+            SELECT 
+                pl.lot_id, 
+                pl.lot_name, 
+                (SELECT COUNT(*) FROM "LEVEL" l WHERE l.lot_id = pl.lot_id) as levels
+            FROM PARKING_LOT pl;
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        
+        lots = []
+        for row in rows:
+            lots.append({
+                "lot_id": row['lot_id'],
+                "lot_name": row['lot_name'],
+                "levels": row['levels']
+            })
+            
+        return jsonify(lots), 200
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return jsonify({"message": "Error fetching infrastructure"}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
 @app.route('/api/admin/infrastructure/<int:lot_id>', methods=['GET'])
 def get_infra_details(lot_id):
     # Get level details
-    levels = execute_query('SELECT * FROM "LEVEL" WHERE lot_id = %s ORDER BY level_number', (lot_id,))
+    levels_query = """
+        SELECT L.*, P.lot_name
+        FROM "LEVEL" L 
+        JOIN PARKING_LOT P ON L.lot_id = P.lot_id 
+        WHERE L.lot_id = %s 
+        ORDER BY level_number
+    """
+    levels = execute_query(levels_query, (lot_id,))
     # Get spot breakdown
-    spots = execute_query('''
+    spots_query = """
         SELECT spot_type, status, COUNT(*) as count 
-        FROM PARKING_SPOT WHERE lot_id = %s 
+        FROM PARKING_SPOT 
+        WHERE lot_id = %s 
         GROUP BY spot_type, status
-    ''', (lot_id,))
+    """
+    spots = execute_query(spots_query, (lot_id,))
     return jsonify({"levels": levels, "spots": spots})
 
-# 2. PATCH: Update permit type for a specific level
 @app.route('/api/admin/level/<int:lot_id>/<int:level_id>', methods=['PATCH'])
 def update_level_permit(lot_id, level_id):
     new_permit = request.json.get('permit_type')
+    query = '''
+        SELECT COUNT(*) as count 
+        FROM PARKING_SESSION ps
+        JOIN PARKING_SPOT spot ON ps.lot_id = spot.lot_id AND ps.spot_id = spot.spot_id
+        WHERE spot.level_id = %s 
+        AND ps.end_time IS NULL
+    '''
+
+    result = execute_query(query, (level_id,))
+    active_count = result[0]['count'] if result else 0
+
+    if active_count > 0:
+        return jsonify({
+            "error": "Level Occupied",
+            "message": f"Cannot change permit type. There are {active_count} active sessions on this level. Close out session(s) first."
+        }), 400
+    
     execute_query(
         'UPDATE "LEVEL" SET allowed_permit_type = %s WHERE lot_id = %s AND level_id = %s',
-        (new_permit, lot_id, level_id)
+        (new_permit, lot_id, level_id),
+        fetch=False
     )
     return jsonify({"message": "Permit updated"})
 
-# 3. DELETE: Wipe the lot (Cascade handles the rest)
 @app.route('/api/admin/infrastructure/<int:lot_id>', methods=['DELETE'])
 def delete_infra(lot_id):
+    active = execute_query('''
+        SELECT COUNT(*) as count FROM PARKING_SESSION 
+        WHERE lot_id = %s AND end_time IS NULL
+    ''', (lot_id,))
+    
+    if active[0]['count'] > 0:
+        return jsonify({
+            "error": "Occupied", 
+            "message": f"Lot has {active[0]['count']} active users. Close out session(s) first."
+        }), 400
+        
     execute_query('DELETE FROM PARKING_LOT WHERE lot_id = %s', (lot_id,))
-    return jsonify({"message": "Infrastructure deleted"})
+    return jsonify({"success": True})
+
+
+# --- Individual Action ---
+@app.route('/api/admin/sessions/close/<int:session_id>', methods=['POST'])
+def close_session(session_id):
+    # Standard manual checkout
+    execute_query('''
+        UPDATE PARKING_SESSION SET end_time = CURRENT_TIMESTAMP 
+        WHERE session_id = %s AND end_time IS NULL
+    ''', (session_id,), fetch=False)
+    return jsonify({"success": True})
+
 
 if __name__ == '__main__':
     # Bind to 0.0.0.0 and specify port 5000 for Docker

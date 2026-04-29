@@ -112,7 +112,7 @@ CREATE TABLE LEVEL_ACCESS (
     start_time  TIME        NOT NULL,
     end_time    TIME        NOT NULL,
     PRIMARY KEY (lot_id, level_id, permit_type, day_type),
-    FOREIGN KEY (lot_id, level_id) REFERENCES "LEVEL"(lot_id, level_id)
+    FOREIGN KEY (lot_id, level_id) REFERENCES "LEVEL"(lot_id, level_id) ON DELETE CASCADE
 );
  
 -- Individual parking spots
@@ -128,7 +128,7 @@ CREATE TABLE PARKING_SPOT (
                             CHECK (spot_type IN ('standard','handicap','motorcycle')),
     spot_number VARCHAR(10),
     PRIMARY KEY (lot_id, spot_id),
-    FOREIGN KEY (lot_id, level_id) REFERENCES "LEVEL"(lot_id, level_id)
+    FOREIGN KEY (lot_id, level_id) REFERENCES "LEVEL"(lot_id, level_id) ON DELETE CASCADE
 );
  
 -- Parking session record
@@ -139,9 +139,9 @@ CREATE TABLE PARKING_SESSION (
     start_time    TIME        NOT NULL DEFAULT CURRENT_TIME,
     end_time      TIME,
     license_plate VARCHAR(20) REFERENCES VEHICLE(license_plate) ON DELETE SET NULL,
-    lot_id        INT         NOT NULL,
-    spot_id       INT         NOT NULL,
-    FOREIGN KEY (lot_id, spot_id) REFERENCES PARKING_SPOT(lot_id, spot_id)
+    lot_id        INT,
+    spot_id       INT,
+    FOREIGN KEY (lot_id, spot_id) REFERENCES PARKING_SPOT(lot_id, spot_id) ON DELETE SET NULL
 );
  
 -- View: all available spots with full location info

@@ -1,30 +1,32 @@
-<script setup>
+<script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import AdminStats from '@/components/AdminStats.vue';
 import AddLotModal from '@/components/AddLotModal.vue';
-import ManageLotModal from '@/components/ManageLotModal.vue'; // New component
-import apiClient from '@/api';
+import ManageLotModal from '@/components/ManageLotModal.vue';
+import AdminAPI from '@/api/admin';
+import type { AdminLotSummary, DashboardStats } from '@/types/index';
+
 
 const showAddModal = ref(false); 
 const showManageModal = ref(false);
-const selectedLotId = ref(null);
-const lots = ref([]);
-const dashboardStats = ref([]);
+const selectedLotId = ref<number | null>(null);
+
+
+const dashboardStats = ref<DashboardStats[]>([]);
+const lots = ref<AdminLotSummary[]>([]);
+
 
 async function fetchInventory() {
   try {
-    const invRes = await apiClient.get('/admin/inventory');
-    lots.value = invRes.data;
-    const statsRes = await apiClient.get('/admin/dashboard-stats');
-    dashboardStats.value = statsRes.data;
+    lots.value = await AdminAPI.getInventory();
+    dashboardStats.value = await AdminAPI.getDashboardStats();
+    
   } catch (err) {
-    console.error("Fetch error:", err);
+    console.error("Dashboard Sync Error:", err);
   }
 }
 
-// Opens the command hub for a specific lot
-function openManage(lotId) {
-  console.log("Open manage for lot ID: ", lotId)
+function openManage(lotId: number) {
   selectedLotId.value = lotId;
   showManageModal.value = true;
 }
@@ -56,7 +58,7 @@ onMounted(fetchInventory);
           <tr v-for="lot in lots" :key="lot.lot_id">
             <td class="name-cell">
               <span class="type-icon">{{ lot.levels > 1 ? '🏢' : '🅿️' }}</span>
-              <strong>{{ lot.name }}</strong>
+              <strong>{{ lot.lot_name }}</strong>
             </td>
             <td>
               <span :class="['badge', (lot.levels > 1 ? 'garage' : 'surface')]">
@@ -84,7 +86,7 @@ onMounted(fetchInventory);
       <AddLotModal v-if="showAddModal" @close="showAddModal = false" @refresh="fetchInventory" />
       
       <ManageLotModal 
-        v-if="showManageModal" 
+        v-if="showManageModal && selectedLotId !== null" 
         :lotId="selectedLotId" 
         @close="showManageModal = false" 
         @refresh="fetchInventory" 

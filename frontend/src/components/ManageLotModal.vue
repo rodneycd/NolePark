@@ -74,20 +74,23 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts"> // 1. Crucial: added lang="ts"
 import { ref, onMounted, computed, watch } from 'vue';
-import apiClient from '@/api';
+import adminAPI from '@/api/admin';
+// 2. Use 'import type' for interfaces and 'AdminLevelConfig' inside {}
+import type { AdminLevelConfig, InfrastructureDetails, SpotBreakdown } from '@/types/index';
 
-const props = defineProps({
-  lotId: Number
-});
+const props = defineProps<{
+  lotId: number; // 3. Updated to the TS-style props definition
+}>();
 
 const emit = defineEmits(['close', 'refresh']);
 
 const loading = ref(true);
-const levels = ref([]);
-const spotBreakdown = ref([]);
-const lotDetails = ref(null);
+// 4. Added explicit type safety to your refs
+const levels = ref<AdminLevelConfig[]>([]);
+const spotBreakdown = ref<SpotBreakdown[]>([]);
+const lotDetails = ref<{ name: string } | null>(null);
 
 watch(() => props.lotId, (newId) => {
   if (newId) fetchDetails();
@@ -96,41 +99,43 @@ watch(() => props.lotId, (newId) => {
 async function fetchDetails() {
   loading.value = true;
   try {
-    const res = await apiClient.get(`/admin/infrastructure/${props.lotId}`);
-    levels.value = res.data.levels;
-    spotBreakdown.value = res.data.spots;
-    // Assume the name comes from the first level or a summary
-    lotDetails.value = { name: levels.value[0]?.lot_name || 'Parking Facility' };
+    const data: InfrastructureDetails = await adminAPI.getInfrastructure(props.lotId);
+    levels.value = data.levels;
+    spotBreakdown.value = data.spots;
+    lotDetails.value = {
+       name: levels.value[0]?.lot_name || 'Parking Facility' 
+    };
   } catch (err) {
-    console.error(err);
+    console.error("Infrastructure Load Error:", err);
   } finally {
     loading.value = false;
   }
 }
 
 const totalSpots = computed(() => {
-  return spotBreakdown.value.reduce((acc, curr) => acc + parseInt(curr.count), 0);
+  return spotBreakdown.value.reduce((acc, curr) => acc + Number(curr.count), 0);
 });
 
 const occupiedCount = computed(() => {
   return spotBreakdown.value
     .filter(s => s.status === 'occupied')
-    .reduce((acc, curr) => acc + parseInt(curr.count), 0);
+    .reduce((acc, curr) => acc + Number(curr.count), 0);
 });
 
-function getSpotCount(type) {
+function getSpotCount(type: string) {
   const match = spotBreakdown.value.find(s => s.spot_type === type);
   return match ? match.count : 0;
 }
 
-async function updateLevel(lvl) {
+// 5. Now 'lvl: AdminLevelConfig' will work because of lang="ts"
+async function updateLevel(lvl: AdminLevelConfig) {
   try {
-    await apiClient.patch(`/admin/level/${props.lotId}/${lvl.level_id}`, {
-      permit_type: lvl.allowed_permit_type
-    });
-    alert(`Level ${lvl.level_number} updated successfully.`);
-  } catch (err) {
-    alert("Failed to update permit type.");
+    await adminAPI.updateLevelPermit(props.lotId, lvl.level_id, lvl.allowed_permit_type);
+    alert(`Level ${lvl.level_number} updated to ${lvl.allowed_permit_type}.`);
+  } catch (err: any) {
+    console.error("Update Error:", err);
+    const message = err.response?.data?.message || "An unexpected error occurred.";
+    alert(message);
   }
 }
 
@@ -138,11 +143,13 @@ async function deleteLot() {
   if (!confirm("Are you sure? This wipes all spot data and active sessions for this lot.")) return;
   
   try {
-    await apiClient.delete(`/admin/infrastructure/${props.lotId}`);
+    await adminAPI.deleteLot(props.lotId);
     emit('refresh');
     emit('close');
-  } catch (err) {
-    alert("Error deleting infrastructure.");
+  } catch (err: any) {
+    console.error("Delete Error:", err);
+    const message = err.response?.data?.message || "An unexpected error occurred.";
+    alert(message);
   }
 }
 
