@@ -17,6 +17,12 @@ export default {
     const { data } = await apiClient.get<LotLevelDetail[]>(`/lots/${lotId}/levels`);
     return data;
   },
+  
+  async suggestLots(query: string): Promise<{ lot_id: number; lot_name: string }[]> {
+    const { data } = await apiClient.get<{ lot_id: number; lot_name: string }[]>('/lots/suggest', {
+      params: { q: query }
+    });
+    return data;
 
   async predictLots(params: PredictionParams): Promise<PredictionResult[]> {
   const { data } = await apiClient.post<PredictionResult[]>('/lots/predict', params);

@@ -73,6 +73,63 @@ export interface LotLevelDetail {
   avail_motorcycle: number;
   pct_full: string;
 }
+export interface ParkingSession {
+  session_id: number;
+  lot_name: string;
+  spot_number: string;
+  start_time: string;
+  vehicle_make: string;
+  vehicle_model: string;
+  vehicle_plate: string;
+}
+
+export interface StartSessionPayload {
+  license_plate: string;
+  lot_id: number;
+  spot_number: string;
+}
+
+export interface AdminLotSummary extends ParkingLot {
+  levels: number;
+  total_spots: number;
+  occupied: number;
+}
+
+export interface AdminLevelConfig {
+  level_id: number;
+  lot_id: number;
+  level_number: number;
+  allowed_permit_type: string;
+  lot_name?: string; // Joined for display convenience
+}
+
+export interface SpotBreakdown {
+  spot_type: 'standard' | 'handicap' | 'motorcycle';
+  status: 'available' | 'occupied';
+  count: number;
+}
+
+export interface InfrastructureDetails {
+  levels: AdminLevelConfig[];
+  spots: SpotBreakdown[];
+}
+
+export interface DashboardStats {
+  label: string;
+  value: number | string;
+  trend?: string;
+  icon?: string;
+}
+
+export interface AdminActiveSession extends ParkingSession {
+  owner_name: string;
+  fsuid: string;
+  permit_type: string;
+  level_number: number;
+  lot_id: number;
+  duration: string;
+  start_time_fmt: string;
+  color: string;
 
 export interface PredictionParams {
   permit_type: string;

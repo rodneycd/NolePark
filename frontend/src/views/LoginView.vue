@@ -20,6 +20,7 @@
 import { ref } from 'vue';
 import AuthCard from '@/components/AuthCard.vue';
 import authApi from '@/api/auth';
+import userApi from '@/api/users';
 import { useRouter } from 'vue-router';
 
 const email = ref('');
@@ -29,11 +30,24 @@ const router = useRouter();
 const handleLogin = async () => {
   try {
     const res = await authApi.login({ email: email.value, password: password.value });
+    
     if (res.success) {
       localStorage.setItem('active_user_id', res.user_id.toString());
-      router.push({name: 'Home'});
+      
+      // 1. Fetch the profile immediately to find the role
+      const profile = await userApi.getUserProfile(res.user_id); 
+      
+      // 2. Direct them to the right "front door"
+      if (profile.user_role === 'admin') {
+        router.push({ name: 'AdminLots' });
+      } else if (profile.permit_type === 'None') {
+        router.push({ name: 'Settings' });
+      } else {
+        router.push({ name: 'Home' });
+      }
     }
   } catch (err) {
+    alert("Invalid credentials or server error");
     console.error("Login failed", err);
   }
 };
