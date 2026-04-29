@@ -226,3 +226,4 @@ SELECT
 FROM USERS u
 LEFT JOIN STUDENTS s ON u.user_id = s.user_id
 LEFT JOIN "ADMIN" a ON u.user_id = a.user_id;
+

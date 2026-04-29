@@ -130,4 +130,25 @@ export interface AdminActiveSession extends ParkingSession {
   duration: string;
   start_time_fmt: string;
   color: string;
+
+export interface PredictionParams {
+  permit_type: string;
+  day_of_week: number;
+  arrival_time: string;
+}
+
+export interface PredictionResult {
+  lot_id: number;
+  lot_name: string;
+  lot_type: 'garage' | 'surface';
+  level_id: number;
+  level_number: number;
+  total_spots: number;
+  historical_occupied: number;
+  current_occupied: number;
+  predicted_occupied: number;
+  predicted_available: number;
+  predicted_percent_full: number;
+  congestion_label: string;
+  recommendation_rank: number;
 }
