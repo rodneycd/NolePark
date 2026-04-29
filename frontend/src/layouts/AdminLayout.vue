@@ -11,9 +11,6 @@
         <router-link to="/admin/sessions" class="nav-link">
           <i class="icon-clock"></i> Active Sessions
         </router-link>
-        <router-link to="/admin/users" class="nav-link">
-          <i class="icon-users"></i> User Audit
-        </router-link>
       </nav>
     </aside>
 
