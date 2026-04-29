@@ -3,7 +3,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from psycopg import connect
 from psycopg.rows import dict_row
-
+from functools import wraps
 
 PERMIT_HIERARCHY = {
     'Student': ['Student'],
@@ -19,6 +19,30 @@ CORS(app)
 CONN_STR = "host=postgres dbname=myapp user=myuser password=mypassword"
 
 # --- DATABASE UTILITIES ---
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Retrieve the user ID from the custom header
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            return jsonify({"success": False, "message": "Authentication required"}), 401
+        
+        try:
+            is_admin = execute_query(
+                'SELECT 1 FROM "ADMIN" WHERE user_id = %s', 
+                (user_id,)
+            )
+            
+            if not is_admin:
+                return jsonify({"success": False, "message": "Admin privileges required"}), 403
+                
+        except Exception as e:
+            print(f"Auth Decorator Error: {e}")
+            return jsonify({"success": False, "message": "Server error during auth check"}), 500
+            
+        return f(*args, **kwargs)
+    return decorated_function
 
 def get_db_connection():
     return connect(CONN_STR, row_factory=dict_row)
@@ -33,7 +57,6 @@ def execute_query(query, params=None, fetch=True):
                 return result
             conn.commit()
             return None
-
 # --- ROUTES ---
 
 @app.route('/api/login', methods=['POST'])
@@ -95,9 +118,16 @@ def get_users():
 
 @app.route('/api/users/<int:user_id>', methods=['GET'])
 def get_profile(user_id):
-    user = execute_query("SELECT * FROM v_user_profiles WHERE user_id = %s", (user_id,))
-    return jsonify(user[0] if user else {})
+    user_data = execute_query("SELECT * FROM v_user_profiles WHERE user_id = %s", (user_id,))
+    
+    if not user_data:
+        return jsonify({}), 404
+    
+    profile = user_data[0]
+    admin_check = execute_query('SELECT 1 FROM "ADMIN" WHERE user_id = %s', (user_id,))
+    profile['user_role'] = 'admin' if admin_check else 'student'
 
+    return jsonify(profile)
 @app.route('/api/permits', methods=['GET'])
 def get_permits():
     permits = execute_query("SELECT permit_type FROM PERMIT")
@@ -410,6 +440,287 @@ def suggest_lots():
     """, (f'%{query}%',))
     
     return jsonify(lots), 200
+
+@app.route('/api/admin/dashboard-stats', methods=['GET'])
+@admin_required
+def get_dashboard_stats():
+    try:
+        # 1. Get Active Sessions
+        # execute_query returns a list, so we grab the first item [0]
+        active_res = execute_query("SELECT COUNT(*) as count FROM v_active_sessions")
+        active_count = active_res[0]['count'] if active_res else 0
+        
+        # 2. Get Infrastructure Summary
+        summary_res = execute_query("""
+            SELECT 
+                COUNT(DISTINCT lot_id) as total_lots,
+                SUM(total_spots) as total_spots,
+                AVG(pct_full) as avg_occupancy
+            FROM v_occupancy_summary
+        """)
+        
+        # Use .get() to avoid errors if the database is empty (None values)
+        row = summary_res[0] if summary_res else {}
+
+        stats = [
+            { "label": "Active Sessions", "value": active_count, "icon": "🚗" },
+            { "label": "Managed Lots", "value": row.get('total_lots', 0), "icon": "🏢" },
+            { "label": "Total Spots", "value": row.get('total_spots', 0), "icon": "🅿️" },
+            { "label": "Campus Occupancy", "value": f"{round(row.get('avg_occupancy') or 0)}%", "icon": "📊" }
+        ]
+        
+        return jsonify(stats), 200
+
+    except Exception as e:
+        print(f"Error in dashboard-stats: {e}")
+        return jsonify({"error": str(e)}), 500
+    
+@app.route('/api/admin/inventory', methods=['GET'])
+@admin_required
+def get_admin_inventory():
+    try:
+        # Use your existing view! 
+        # We group by lot to get the 'Structure' info (levels/total spots)
+        query = """
+            SELECT 
+                lot_id,
+                lot_name,
+                MAX(level_number) as levels, 
+                SUM(total_spots) as total_spots,
+                SUM(occupied) as occupied
+            FROM v_occupancy_summary
+            GROUP BY lot_id, lot_name
+        """
+        results = execute_query(query)
+        
+        # Add a simple 'type' logic if it's not in your view yet
+        for lot in results:
+            lot['type'] = 'Garage' if lot['levels'] > 1 else 'Surface'
+            
+        return jsonify(results), 200
+    except Exception as e:
+        print(f"Inventory Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/create-lot-infrastructure', methods=['POST'])
+@admin_required
+def create_lot_infrastructure():
+    data = request.json
+    lot_name = data.get('name')
+    # Using your 'lot_name' column name from PARKING_LOT
+    level_configs = data.get('level_configs') 
+
+    if not lot_name or not level_configs:
+        return jsonify({"error": "Missing required fields"}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        # 1. Insert the Lot (Using your PARKING_LOT table)
+        # Note: 'prefix' isn't in your schema, so we'll use it for logic but not DB storage
+        # unless you add it to PARKING_LOT. 
+        cur.execute(
+            "INSERT INTO PARKING_LOT (lot_name) VALUES (%s) RETURNING lot_id",
+            (lot_name,)
+        )
+        lot_id = cur.fetchone()['lot_id']
+
+        for config in level_configs:
+            # 2. Validation
+            total = config['total_spots']
+            hc_count = config.get('hc_count', 0)
+            moto_count = config.get('moto_count', 0)
+
+            if (hc_count + moto_count) > total:
+                raise ValueError(f"Level {config['level_number']} specialty spots exceed capacity.")
+
+            # 3. Insert the Level (Using your "LEVEL" table)
+            # Note: "LEVEL" is a reserved word, so we quote it.
+            cur.execute(
+                """
+                INSERT INTO "LEVEL" (lot_id, level_number, allowed_permit_type) 
+                VALUES (%s, %s, %s) RETURNING level_id
+                """,
+                (lot_id, config['level_number'], config['permit_type'])
+            )
+            level_id = cur.fetchone()['level_id']
+
+            # 4. Generate Spots (Using your PARKING_SPOT table)
+            for i in range(1, total + 1):
+                # Determine Spot Type (standard, handicap, motorcycle)
+                if i <= hc_count:
+                    s_type = 'handicap'
+                elif i <= (hc_count + moto_count):
+                    s_type = 'motorcycle'
+                else:
+                    s_type = 'standard'
+
+                # Spot number logic
+                # Using the prefix from the form to build a string for ps.spot_number
+                prefix = data.get('prefix', 'LOT')
+                formatted_spot_num = f"{prefix}{config['level_number']}-{i}"
+
+                cur.execute(
+                    """
+                    INSERT INTO PARKING_SPOT (lot_id, level_id, spot_number, spot_type, "status") 
+                    VALUES (%s, %s, %s, %s, 'available')
+                    """,
+                    (lot_id, level_id, formatted_spot_num, s_type)
+                )
+
+        conn.commit()
+        return jsonify({"message": f"Successfully generated {lot_name} infrastructure."}), 201
+
+    except Exception as e:
+        conn.rollback()
+        print(f"Transaction Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        cur.close()
+        conn.close()
+
+    
+@app.route('/api/admin/active-sessions', methods=['GET'])
+@admin_required
+def get_active_sessions():
+    try:
+        # Pulling from your view which already joins USERS, VEHICLES, and LOTS
+        query = """
+            SELECT 
+                v.session_id,
+                v.owner_name,
+                s.fsuid, 
+                v.permit_type,
+                v.license_plate,
+                v.make,
+                v.model,
+                v.lot_name,
+                v.level_number,
+                v.spot_number,
+                TO_CHAR(v.start_time, 'HH12:MI AM') as start_time_fmt
+            FROM v_active_sessions v
+            LEFT JOIN students s ON v.owner_id = s.user_id
+            ORDER BY v.start_time DESC
+        """
+        sessions = execute_query(query)
+        return jsonify(sessions), 200
+    except Exception as e:
+        print(e)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/infrastructure', methods=['GET'])
+@admin_required
+def get_all_infrastructure():
+    conn = get_db_connection() 
+    cursor = conn.cursor()
+    
+    try:
+        query = """
+            SELECT 
+                pl.lot_id, 
+                pl.lot_name, 
+                (SELECT COUNT(*) FROM "LEVEL" l WHERE l.lot_id = pl.lot_id) as levels
+            FROM PARKING_LOT pl;
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        
+        lots = []
+        for row in rows:
+            lots.append({
+                "lot_id": row['lot_id'],
+                "lot_name": row['lot_name'],
+                "levels": row['levels']
+            })
+            
+        return jsonify(lots), 200
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return jsonify({"message": "Error fetching infrastructure"}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.route('/api/admin/infrastructure/<int:lot_id>', methods=['GET'])
+@admin_required
+def get_infra_details(lot_id):
+    # Get level details
+    levels_query = """
+        SELECT L.*, P.lot_name
+        FROM "LEVEL" L 
+        JOIN PARKING_LOT P ON L.lot_id = P.lot_id 
+        WHERE L.lot_id = %s 
+        ORDER BY level_number
+    """
+    levels = execute_query(levels_query, (lot_id,))
+    # Get spot breakdown
+    spots_query = """
+        SELECT spot_type, status, COUNT(*) as count 
+        FROM PARKING_SPOT 
+        WHERE lot_id = %s 
+        GROUP BY spot_type, status
+    """
+    spots = execute_query(spots_query, (lot_id,))
+    return jsonify({"levels": levels, "spots": spots})
+
+@app.route('/api/admin/level/<int:lot_id>/<int:level_id>', methods=['PATCH'])
+@admin_required
+def update_level_permit(lot_id, level_id):
+    new_permit = request.json.get('permit_type')
+    query = '''
+        SELECT COUNT(*) as count 
+        FROM PARKING_SESSION ps
+        JOIN PARKING_SPOT spot ON ps.lot_id = spot.lot_id AND ps.spot_id = spot.spot_id
+        WHERE spot.level_id = %s 
+        AND ps.end_time IS NULL
+    '''
+
+    result = execute_query(query, (level_id,))
+    active_count = result[0]['count'] if result else 0
+
+    if active_count > 0:
+        return jsonify({
+            "error": "Level Occupied",
+            "message": f"Cannot change permit type. There are {active_count} active sessions on this level. Close out session(s) first."
+        }), 400
+    
+    execute_query(
+        'UPDATE "LEVEL" SET allowed_permit_type = %s WHERE lot_id = %s AND level_id = %s',
+        (new_permit, lot_id, level_id),
+        fetch=False
+    )
+    return jsonify({"message": "Permit updated"})
+
+@app.route('/api/admin/infrastructure/<int:lot_id>', methods=['DELETE'])
+@admin_required
+def delete_infra(lot_id):
+    active = execute_query('''
+        SELECT COUNT(*) as count FROM PARKING_SESSION 
+        WHERE lot_id = %s AND end_time IS NULL
+    ''', (lot_id,))
+    
+    if active[0]['count'] > 0:
+        return jsonify({
+            "error": "Occupied", 
+            "message": f"Lot has {active[0]['count']} active users. Close out session(s) first."
+        }), 400
+        
+    execute_query('DELETE FROM PARKING_LOT WHERE lot_id = %s', (lot_id,))
+    return jsonify({"success": True})
+
+# --- Individual Action ---
+@app.route('/api/admin/sessions/close/<int:session_id>', methods=['POST'])
+@admin_required
+def close_session(session_id):
+    # Standard manual checkout
+    execute_query('''
+        UPDATE PARKING_SESSION SET end_time = CURRENT_TIMESTAMP 
+        WHERE session_id = %s AND end_time IS NULL
+    ''', (session_id,), fetch=False)
+    return jsonify({"success": True})
+
 
 if __name__ == '__main__':
     # Bind to 0.0.0.0 and specify port 5000 for Docker
