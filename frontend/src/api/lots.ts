@@ -23,7 +23,7 @@ export default {
       params: { q: query }
     });
     return data;
-
+  },
   async predictLots(params: PredictionParams): Promise<PredictionResult[]> {
   const { data } = await apiClient.post<PredictionResult[]>('/lots/predict', params);
   return data;
